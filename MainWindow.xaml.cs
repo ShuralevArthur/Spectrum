@@ -1,37 +1,40 @@
-﻿using System.Threading.Tasks;
-using System.Windows;
-using System.Windows.Media.Imaging;
+﻿using System;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
-using System;
-using System.Media;
-using System.Net;
 using System.Runtime.InteropServices;
 using System.Speech.Synthesis;
+using System.Threading.Tasks;
+using System.Windows;
 using System.Windows.Documents;
-using Tesseract;
-using System.Windows.Threading;
-using System.Diagnostics;
+using System.Windows.Forms;
+using System.Windows.Media.Imaging;
+using IronOcr;
+using IronOcr.Languages;
+using Application = System.Windows.Application; 
+//using Tesseract;
+//using System.Media;
 
 namespace Spectrum
 {
-    public partial class MainWindow : Window
+    public partial class MainWindow
     {
         [DllImport("kernel32.dll")]
-        extern static Boolean SetProcessWorkingSetSize(IntPtr hProcess,
-            Int32 dwMinimumWorkingSetSize, Int32 dwMaximumWorkingSetSize);
+        static extern Boolean SetProcessWorkingSetSize(IntPtr hProcess, Int32 dwMinimumWorkingSetSize,
+            Int32 dwMaximumWorkingSetSize);
 
         private static Int16 _width = 1;
         private static Int16 _heigth = 1;
         private static Boolean _isEng = false;
-        readonly GlobalHook gh = new GlobalHook();
+        private readonly GlobalHook _gh = new GlobalHook();
+        private static readonly String _version = "beta";
 
-        readonly Action<MainWindow> Events = window =>
+        private readonly Action<MainWindow> _events = window =>
         {
             window.ButtonClose.Click += (x, y) =>
             {
-                foreach (Window windows in App.Current.Windows) windows.Close();
+                foreach (Window windows in Application.Current.Windows) windows.Close();
             };
             window.ButtonMinimize.Click += (x, y) => window.WindowState = WindowState.Minimized;
             window.ButtonPV.Click += (x, y) => new PVWindow().Show();
@@ -43,14 +46,15 @@ namespace Spectrum
             InitializeComponent();
             ButtonRusLang.BorderThickness = new Thickness(2, 2, 2, 2);
             Settings.SettingsAllForm(this);
+            _setVersion(this, _version);
             Loaded += (x, y) =>
             {
                 //Speak("Spectrum успешно запустился");
-                Events(this);
+                _events(this);
 
-                gh.KeyDown += (d, f) =>
+                _gh.KeyDown += (d, f) =>
                 {
-                    if (f.KeyCode == System.Windows.Forms.Keys.Q) Screen();
+                    if (f.KeyCode == Keys.PageUp) Screen();
                 };
 
                 MouseWheel += (k, l) =>
@@ -78,16 +82,8 @@ namespace Spectrum
                     }
                 };
 
-                SliderZoomValueX.ValueChanged += (f, z) =>
-                {
-                    _heigth = (Int16)z.NewValue;
-                };
-
-                SliderZoomValueY.ValueChanged += (f, z) =>
-                {
-                    _width = (Int16)z.NewValue;
-                };
-
+                SliderZoomValueX.ValueChanged += (f, z) => _heigth = (Int16)z.NewValue;
+                SliderZoomValueY.ValueChanged += (f, z) => _width = (Int16)z.NewValue;
                 SetBitmapImage();
             };
 
@@ -106,7 +102,7 @@ namespace Spectrum
             };
         }
 
-        async void SetBitmapImage()
+        private async void SetBitmapImage()
         {
             await Task.Run(() =>
             {
@@ -115,68 +111,51 @@ namespace Spectrum
                     var rectangle = new Rectangle(
                     System.Windows.Forms.Cursor.Position.X,
                     System.Windows.Forms.Cursor.Position.Y, _width, _heigth);
-                    var bmp = new Bitmap(
-                        rectangle.Width, rectangle.Height,
-                        PixelFormat.Format32bppArgb);
+                    var bmp = new Bitmap(rectangle.Width, rectangle.Height, PixelFormat.Format32bppArgb);
                     var graphics = Graphics.FromImage(bmp);
-                    graphics.CopyFromScreen(
-                        rectangle.Left,
-                        rectangle.Top, 0, 0, bmp.Size,
-                        CopyPixelOperation.SourceCopy);
-                    Dispatcher.Invoke(delegate
-                    {
-                        ImageNowImage.Source = BitmapToImageSource(bmp);
-                    });
+                    graphics.CopyFromScreen(rectangle.Left, rectangle.Top, 0, 0, bmp.Size, CopyPixelOperation.SourceCopy);
+                    Dispatcher.Invoke(delegate { ImageNowImage.Source = _bitmapToImageSource(bmp); });
                 }
             });
         }
 
-        async void Screen()
+        private async void Screen()
         {
             await Task.Run(() =>
             {
-                var rectangle = new Rectangle(
-                System.Windows.Forms.Cursor.Position.X,
-                System.Windows.Forms.Cursor.Position.Y, _width, _heigth);
-                var bmp = new Bitmap(
-                    rectangle.Width, rectangle.Height,
-                    PixelFormat.Format32bppArgb);
+                var rectangle = new Rectangle(System.Windows.Forms.Cursor.Position.X, System.Windows.Forms.Cursor.Position.Y, _width, _heigth);
+                var bmp = new Bitmap(rectangle.Width, rectangle.Height, PixelFormat.Format32bppArgb);
                 var graphics = Graphics.FromImage(bmp);
-                graphics.CopyFromScreen(
-                    rectangle.Left,
-                    rectangle.Top, 0, 0, bmp.Size,
-                    CopyPixelOperation.SourceCopy);
-                var textResult = ReturnClearText(ReadTextInImg(bmp));
-                Dispatcher.Invoke(delegate
-                {
-                    SetValues(this, bmp, textResult);
-                });
+                graphics.CopyFromScreen(rectangle.Left, rectangle.Top, 0, 0, bmp.Size, CopyPixelOperation.SourceCopy);
+                var textResult = _readTextInImg(bmp);
+                Dispatcher.Invoke(delegate { _setValues(this, bmp, textResult); });
                 Speak(textResult);
             });
         }
 
-        readonly Func<Bitmap, BitmapImage> BitmapToImageSource = bitmap =>
+        private readonly Func<Bitmap, BitmapImage> _bitmapToImageSource = bitmap =>
         {
             var ms = new MemoryStream() { Position = 0 };
-            var bitmapImage = new BitmapImage()
-            {
-                CacheOption = BitmapCacheOption.None
-            };
-            bitmap.Save(ms, System.Drawing.Imaging.ImageFormat.Bmp);
+            var bitmapImage = new BitmapImage() { CacheOption = BitmapCacheOption.None };
+            bitmap.Save(ms, ImageFormat.Bmp);
             bitmapImage.BeginInit();
             bitmapImage.StreamSource = ms;
             bitmapImage.EndInit();
             return bitmapImage;
         };
 
-        readonly Func<Bitmap, String> ReadTextInImg = bmp =>
+        /*private readonly Func<Bitmap, String> _readTextInImg = bmp =>
         _isEng == false
         ? new TesseractEngine(AppDomain.CurrentDomain.BaseDirectory + "tessdata", "rus", EngineMode.Default)
         .Process(PixConverter.ToPix(bmp)).GetText()
         : new TesseractEngine(AppDomain.CurrentDomain.BaseDirectory + "tessdata", "eng", EngineMode.Default)
-        .Process(PixConverter.ToPix(bmp)).GetText();
+        .Process(PixConverter.ToPix(bmp)).GetText();*/ // Tesseract OCR. 
 
-        readonly Func<String, String> ReturnClearText = text =>
+        private readonly Func<Bitmap, String> _readTextInImg = bmp => _isEng
+        ? new AutoOcr { Language = English.OcrLanguagePack }.Read(bmp).Text
+        : new AutoOcr { Language = Russian.OcrLanguagePack }.Read(bmp).Text;
+
+        /*private readonly Func<String, String> _returnClearText = text =>
         {
             var endText = String.Empty;
             for (Int32 i = 0; i < text.Length; i++)
@@ -187,27 +166,29 @@ namespace Spectrum
                     endText += text[i];
                 else continue;
             }
-            return endText;
-        };
+            return endText.ToLower();
+        };*/
 
-        async void Speak(String text)
+        private async void Speak(String text)
         {
             await Task.Run(() =>
             {
-                var speaker = new SpeechSynthesizer()
+                new SpeechSynthesizer()
                 {
                     Rate = 1,
                     Volume = 100
-                };
-                speaker.Speak(text);
+                }.Speak(text);
             });
         }
 
-        readonly Action<MainWindow, Bitmap, String> SetValues = (MainWindow, bmp, textResult) =>
+        private readonly Action<MainWindow, Bitmap, String> _setValues = (mainWindow, bmp, textResult) =>
         {
-            MainWindow.ImageNowImage.Source = MainWindow.BitmapToImageSource(bmp);
-            MainWindow.RichTextBoxText.Document.Blocks.Clear();
-            MainWindow.RichTextBoxText.Document.Blocks.Add(new Paragraph(new Run(textResult)));
+            mainWindow.ImageNowImage.Source = mainWindow._bitmapToImageSource(bmp);
+            mainWindow.RichTextBoxText.Document.Blocks.Clear();
+            mainWindow.RichTextBoxText.Document.Blocks.Add(new Paragraph(new Run(textResult)));
         };
+
+        private readonly Action<MainWindow, String> _setVersion = (mainWindow, version) =>
+            mainWindow.LabelVersion.Content = $"Version: {version}";
     }
 }
